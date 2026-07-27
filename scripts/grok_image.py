@@ -17,14 +17,60 @@ from urllib.parse import quote
 
 SUPPORTED_ASPECT_RATIOS = ("auto", "1:1", "16:9", "9:16", "4:3", "3:4")
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+LOGIN_CONFIRMATION = "You are logged in with grok.com."
 IMAGE_PATH_PATTERN = re.compile(
     r"(?<![\w./-])(images/[A-Za-z0-9._/-]+\.(?:jpe?g|png|webp))",
     re.IGNORECASE,
 )
+MODERATION_MARKERS = (
+    "moderation",
+    "content policy",
+    "safety policy",
+    "safety block",
+    "request blocked",
+    "respect_moderation=false",
+)
 
 
 class GenerationError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        next_action: str,
+        exit_code: int,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.next_action = next_action
+        self.exit_code = exit_code
+
+    def payload(self) -> Dict[str, object]:
+        return {
+            "ok": False,
+            "provider": "grok-build-oauth",
+            "action": "generate",
+            "error": self.code,
+            "message": self.message,
+            "fallback_used": False,
+            "next_action": self.next_action,
+        }
+
+
+def error(
+    code: str,
+    message: str,
+    next_action: str,
+    exit_code: int,
+) -> GenerationError:
+    return GenerationError(code, message, next_action, exit_code)
+
+
+def oauth_environment() -> Dict[str, str]:
+    env = os.environ.copy()
+    env.pop("XAI_API_KEY", None)
+    return env
 
 
 def build_agent_prompt(prompt: str, aspect_ratio: str) -> str:
@@ -69,7 +115,12 @@ def final_event(events_text: str) -> Dict[str, object]:
         if event.get("type") == "end":
             result = event
     if result is None:
-        raise GenerationError("Grok returned no final JSON event")
+        raise error(
+            "empty_response",
+            "Grok OAuth 이미지 생성 응답이 비어 있거나 완료 이벤트가 없어.",
+            "잠시 후 다시 시도하고, 반복되면 Grok Build 상태를 확인해 줘.",
+            5,
+        )
     return result
 
 
@@ -136,18 +187,28 @@ def resolve_source_image(
     if len(unique_matches) == 1:
         return unique_matches[0]
     if len(unique_matches) > 1:
-        raise GenerationError(
-            f"Grok reported multiple generated images for session {session_id}"
+        raise error(
+            "ambiguous_output",
+            f"Grok 세션 {session_id}에 생성 결과가 여러 개라 하나를 고를 수 없어.",
+            "한 번에 이미지 하나만 생성하도록 다시 요청해 줘.",
+            7,
         )
 
     session_matches = list(image_files(root / "images"))
     if len(session_matches) == 1:
         return session_matches[0]
     if not session_matches:
-        raise GenerationError(f"No generated image found for session {session_id}")
-    raise GenerationError(
-        f"Generated image is ambiguous for session {session_id}: "
-        f"{len(session_matches)} files"
+        raise error(
+            "output_missing",
+            f"Grok 세션 {session_id}에서 생성된 이미지 파일을 찾지 못했어.",
+            "다시 시도하고, 반복되면 Grok Build 세션 디렉터리를 확인해 줘.",
+            7,
+        )
+    raise error(
+        "ambiguous_output",
+        f"Grok 세션 {session_id}에 이미지가 {len(session_matches)}개 있어 결과가 모호해.",
+        "한 번에 이미지 하나만 생성하도록 다시 요청해 줘.",
+        7,
     )
 
 
@@ -188,15 +249,33 @@ def copy_verified(source: Path, requested: Path) -> Dict[str, object]:
             shutil.copyfile(source, temporary)
             os.replace(temporary, destination)
             temporary = None
+        except OSError as copy_error:
+            raise error(
+                "copy_failed",
+                f"생성 이미지를 요청 경로로 복사하지 못했어: {copy_error}",
+                "출력 디렉터리의 쓰기 권한과 남은 용량을 확인해 줘.",
+                7,
+            ) from copy_error
         finally:
             if temporary and temporary.exists():
                 temporary.unlink()
 
     if not destination.is_file() or destination.stat().st_size == 0:
-        raise GenerationError(f"Generated image was not saved to {destination}")
+        raise error(
+            "output_missing",
+            f"복사된 이미지가 없거나 비어 있어: {destination}",
+            "출력 경로의 쓰기 권한과 남은 용량을 확인해 줘.",
+            7,
+        )
     destination_hash = sha256_file(destination)
     if source_hash != destination_hash:
-        raise GenerationError(f"Generated image hash mismatch at {destination}")
+        destination.unlink(missing_ok=True)
+        raise error(
+            "hash_mismatch",
+            f"복사된 이미지의 hash가 원본과 달라: {destination}",
+            "파일 시스템 상태를 확인한 뒤 다시 시도해 줘.",
+            7,
+        )
 
     return {
         "output": str(destination),
@@ -211,33 +290,114 @@ def default_output() -> Path:
     return Path.cwd() / f"grok-image-{stamp}"
 
 
-def generate(prompt: str, aspect_ratio: str, output: Path) -> Dict[str, object]:
-    cwd = Path.cwd().resolve()
-    env = os.environ.copy()
-    env.pop("XAI_API_KEY", None)
-
+def run_command(
+    command: List[str],
+    cwd: Path,
+    env: Dict[str, str],
+    timeout: int,
+) -> subprocess.CompletedProcess:
     try:
-        process = subprocess.run(
-            build_command(prompt, aspect_ratio),
+        return subprocess.run(
+            command,
             cwd=str(cwd),
             env=env,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            timeout=timeout,
         )
-    except FileNotFoundError as error:
-        raise GenerationError("Grok Build CLI is not installed or not on PATH") from error
+    except subprocess.TimeoutExpired as timeout_error:
+        raise error(
+            "timeout",
+            f"Grok OAuth 이미지 생성이 {timeout}초 안에 끝나지 않았어.",
+            "잠시 후 다시 시도하거나 `--timeout` 값을 늘려 줘.",
+            6,
+        ) from timeout_error
+
+
+def preflight_oauth(cwd: Path, env: Dict[str, str], timeout: int) -> None:
+    if shutil.which("grok") is None:
+        raise error(
+            "grok_not_installed",
+            "Grok Build CLI를 찾지 못했어.",
+            "Grok Build를 설치하고 `grok --version`을 확인해 줘.",
+            3,
+        )
+    process = run_command(["grok", "models"], cwd, env, min(timeout, 15))
+    output = f"{process.stdout}\n{process.stderr}"
+    if process.returncode != 0 or LOGIN_CONFIRMATION not in output:
+        raise error(
+            "oauth_invalid",
+            "Grok OAuth 로그인이 없거나 만료됐어.",
+            "`grok login`으로 로그인한 뒤 다시 요청해 줘.",
+            3,
+        )
+
+
+def moderation_detected(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in MODERATION_MARKERS)
+
+
+def process_failure(process: subprocess.CompletedProcess) -> GenerationError:
+    combined = f"{process.stdout}\n{process.stderr}"
+    if moderation_detected(combined):
+        return error(
+            "moderation_blocked",
+            "Grok 안전 정책 때문에 이미지 생성이 차단됐어.",
+            "차단을 우회하지 말고 다른 안전한 방향으로 프롬프트를 수정해 줘.",
+            5,
+        )
+    detail = process.stderr.strip() or f"exit code {process.returncode}"
+    return error(
+        "provider_error",
+        f"Grok 이미지 생성 요청이 실패했어: {detail}",
+        "Grok Build 상태를 확인하고 다시 시도해 줘.",
+        5,
+    )
+
+
+def generate(
+    prompt: str,
+    aspect_ratio: str,
+    output: Path,
+    timeout: int = 180,
+) -> Dict[str, object]:
+    cwd = Path.cwd().resolve()
+    env = oauth_environment()
+    preflight_oauth(cwd, env, timeout)
+
+    process = run_command(build_command(prompt, aspect_ratio), cwd, env, timeout)
+    if process.returncode != 0:
+        raise process_failure(process)
+    if moderation_detected(f"{process.stdout}\n{process.stderr}"):
+        raise process_failure(process)
 
     event = final_event(process.stdout)
-    if process.returncode != 0:
-        detail = process.stderr.strip() or f"exit code {process.returncode}"
-        raise GenerationError(f"Grok CLI failed: {detail}")
-    if event.get("stopReason") != "EndTurn":
-        raise GenerationError(f"Grok generation stopped: {event.get('stopReason', 'unknown')}")
+    stop_reason = event.get("stopReason")
+    if stop_reason == "Cancelled":
+        raise error(
+            "permission_cancelled",
+            "Grok 이미지 도구 실행이 취소됐어. 권한 승인이 실패했을 가능성이 있어.",
+            "headless 실행의 승인 설정을 확인한 뒤 다시 시도해 줘.",
+            4,
+        )
+    if stop_reason != "EndTurn":
+        raise error(
+            "provider_error",
+            f"Grok 이미지 생성이 비정상 종료됐어: {stop_reason or 'unknown'}.",
+            "Grok Build 상태를 확인하고 다시 시도해 줘.",
+            5,
+        )
 
     session_id = event.get("sessionId")
     if not isinstance(session_id, str) or not session_id:
-        raise GenerationError("Grok returned no session ID")
+        raise error(
+            "empty_response",
+            "Grok 응답에 session ID가 없어 생성 결과를 확인할 수 없어.",
+            "다시 시도하고, 반복되면 Grok Build를 업데이트해 줘.",
+            5,
+        )
 
     source = resolve_source_image(cwd, session_id, process.stdout)
     copied = copy_verified(source, output)
@@ -251,6 +411,25 @@ def generate(prompt: str, aspect_ratio: str, output: Path) -> Dict[str, object]:
     }
 
 
+def aspect_ratio(value: str) -> str:
+    if value not in SUPPORTED_ASPECT_RATIOS:
+        supported = ", ".join(SUPPORTED_ASPECT_RATIOS)
+        raise argparse.ArgumentTypeError(
+            f"지원하지 않는 aspect ratio '{value}'. 지원 값: {supported}"
+        )
+    return value
+
+
+def positive_timeout(value: str) -> int:
+    try:
+        timeout = int(value)
+    except ValueError as value_error:
+        raise argparse.ArgumentTypeError("timeout은 초 단위 정수여야 해") from value_error
+    if timeout < 1:
+        raise argparse.ArgumentTypeError("timeout은 1초 이상이어야 해")
+    return timeout
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate an image with Grok Build image_gen and grok.com OAuth."
@@ -259,7 +438,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aspect-ratio",
         default="auto",
-        choices=SUPPORTED_ASPECT_RATIOS,
+        type=aspect_ratio,
         help="Output aspect ratio (default: auto)",
     )
     parser.add_argument(
@@ -271,24 +450,41 @@ def parse_args() -> argparse.Namespace:
             "(default: timestamped file in the current directory)"
         ),
     )
+    parser.add_argument(
+        "--timeout",
+        type=positive_timeout,
+        default=180,
+        help="Maximum Grok execution time in seconds (default: 180)",
+    )
     return parser.parse_args()
+
+
+def emit_error(generation_error: GenerationError) -> None:
+    print(json.dumps(generation_error.payload(), ensure_ascii=False), file=sys.stderr)
 
 
 def main() -> int:
     args = parse_args()
     if not args.prompt.strip():
-        print("Prompt must not be empty", file=sys.stderr)
-        return 2
+        prompt_error = error(
+            "invalid_prompt",
+            "이미지 prompt가 비어 있어.",
+            "생성할 장면을 prompt로 입력해 줘.",
+            2,
+        )
+        emit_error(prompt_error)
+        return prompt_error.exit_code
 
     try:
         result = generate(
             prompt=args.prompt,
             aspect_ratio=args.aspect_ratio,
             output=args.output or default_output(),
+            timeout=args.timeout,
         )
-    except GenerationError as error:
-        print(str(error), file=sys.stderr)
-        return 1
+    except GenerationError as generation_error:
+        emit_error(generation_error)
+        return generation_error.exit_code
 
     print(json.dumps(result, ensure_ascii=False))
     return 0

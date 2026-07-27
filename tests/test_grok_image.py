@@ -1,10 +1,14 @@
 import hashlib
+import argparse
 import importlib.util
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).parents[1] / "scripts" / "grok_image.py"
@@ -154,6 +158,123 @@ class GrokImageTests(unittest.TestCase):
                 self.assertEqual(output.name, f"result-{index}.jpg")
                 self.assertEqual(output.read_bytes(), sources[index].read_bytes())
             self.assertEqual(list((root / "outputs").glob("*.tmp")), [])
+
+    def test_oauth_environment_removes_api_key(self):
+        with patch.dict(os.environ, {"XAI_API_KEY": "must-not-pass"}):
+            self.assertNotIn("XAI_API_KEY", grok_image.oauth_environment())
+
+    def test_preflight_accepts_grok_com_login(self):
+        completed = subprocess.CompletedProcess(
+            ["grok", "models"],
+            0,
+            stdout="You are logged in with grok.com.\n",
+            stderr="",
+        )
+        with patch.object(grok_image.shutil, "which", return_value="/bin/grok"), patch.object(
+            grok_image, "run_command", return_value=completed
+        ):
+            grok_image.preflight_oauth(Path.cwd(), {}, 10)
+
+    def test_preflight_rejects_expired_oauth(self):
+        completed = subprocess.CompletedProcess(
+            ["grok", "models"], 1, stdout="", stderr="Login required"
+        )
+        with patch.object(grok_image.shutil, "which", return_value="/bin/grok"), patch.object(
+            grok_image, "run_command", return_value=completed
+        ), self.assertRaises(grok_image.GenerationError) as raised:
+            grok_image.preflight_oauth(Path.cwd(), {}, 10)
+        self.assertEqual(raised.exception.code, "oauth_invalid")
+        self.assertEqual(raised.exception.exit_code, 3)
+        self.assertIn("grok login", raised.exception.next_action)
+
+    def test_run_command_maps_timeout(self):
+        with patch.object(
+            grok_image.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(["grok"], 2),
+        ), self.assertRaises(grok_image.GenerationError) as raised:
+            grok_image.run_command(["grok"], Path.cwd(), {}, 2)
+        self.assertEqual(raised.exception.code, "timeout")
+        self.assertEqual(raised.exception.exit_code, 6)
+
+    def test_generate_maps_permission_cancellation(self):
+        cancelled = subprocess.CompletedProcess(
+            ["grok"],
+            0,
+            stdout=json.dumps(
+                {
+                    "type": "end",
+                    "stopReason": "Cancelled",
+                    "sessionId": "session-1",
+                }
+            ),
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            grok_image, "preflight_oauth"
+        ), patch.object(grok_image, "run_command", return_value=cancelled):
+            output = Path(tmp) / "must-not-exist.jpg"
+            with self.assertRaises(grok_image.GenerationError) as raised:
+                grok_image.generate("prompt", "1:1", output)
+            self.assertEqual(raised.exception.code, "permission_cancelled")
+            self.assertEqual(raised.exception.exit_code, 4)
+            self.assertFalse(output.exists())
+
+    def test_generate_maps_moderation_failure(self):
+        blocked = subprocess.CompletedProcess(
+            ["grok"], 1, stdout="", stderr="Request blocked by moderation"
+        )
+        with patch.object(grok_image, "preflight_oauth"), patch.object(
+            grok_image, "run_command", return_value=blocked
+        ), self.assertRaises(grok_image.GenerationError) as raised:
+            grok_image.generate("prompt", "1:1", Path("unused.jpg"))
+        self.assertEqual(raised.exception.code, "moderation_blocked")
+        self.assertEqual(raised.exception.exit_code, 5)
+        self.assertIn("우회", raised.exception.next_action)
+
+    def test_generate_rejects_empty_response(self):
+        empty = subprocess.CompletedProcess(
+            ["grok"], 0, stdout=json.dumps({"type": "text", "data": ""}), stderr=""
+        )
+        with patch.object(grok_image, "preflight_oauth"), patch.object(
+            grok_image, "run_command", return_value=empty
+        ), self.assertRaises(grok_image.GenerationError) as raised:
+            grok_image.generate("prompt", "1:1", Path("unused.jpg"))
+        self.assertEqual(raised.exception.code, "empty_response")
+        self.assertEqual(raised.exception.exit_code, 5)
+
+    def test_missing_session_output_is_explicit(self):
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(
+            grok_image.GenerationError
+        ) as raised:
+            root = Path(tmp)
+            cwd = root / "repo"
+            cwd.mkdir()
+            grok_image.resolve_source_image(
+                cwd, "empty-session", text_events("images/1.jpg"), home=root
+            )
+        self.assertEqual(raised.exception.code, "output_missing")
+        self.assertEqual(raised.exception.exit_code, 7)
+
+    def test_invalid_aspect_ratio_is_rejected(self):
+        with self.assertRaises(argparse.ArgumentTypeError) as raised:
+            grok_image.aspect_ratio("2:1")
+        self.assertIn("지원하지 않는", str(raised.exception))
+
+    def test_copy_failure_cleans_temporary_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.jpg"
+            source.write_bytes(b"content")
+            destination_dir = root / "output"
+            with patch.object(
+                grok_image.shutil, "copyfile", side_effect=OSError("disk full")
+            ), self.assertRaises(grok_image.GenerationError) as raised:
+                grok_image.copy_verified(source, destination_dir / "result.jpg")
+            self.assertEqual(raised.exception.code, "copy_failed")
+            self.assertEqual(list(destination_dir.glob("*.tmp")), [])
+            self.assertEqual(list(destination_dir.glob(".*.tmp")), [])
+            self.assertFalse((destination_dir / "result.jpg").exists())
 
 
 if __name__ == "__main__":
