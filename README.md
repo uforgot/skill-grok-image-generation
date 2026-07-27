@@ -28,8 +28,10 @@ auto, 1:1, 16:9, 9:16, 4:3, 3:4
 Successful stdout:
 
 ```json
-{"ok": true, "provider": "grok-build-oauth", "action": "generate", "output": "/absolute/path/out/forest.jpg", "session_id": "..."}
+{"ok": true, "provider": "grok-build-oauth", "action": "generate", "output": "/absolute/path/out/forest.jpg", "extension": ".jpg", "sha256": "...", "bytes": 123456, "session_id": "..."}
 ```
+
+The wrapper binds the result to the current Grok session ID and the `images/...` path returned in that run's streaming events. It copies through a temporary file and atomically replaces the destination, then verifies the SHA-256 hash. The source format is preserved: if `--output` has a different extension, the returned path is corrected to the generated extension.
 
 The Grok subprocess is restricted to `image_gen`, runs with web search disabled, and uses non-interactive approval so the image call can complete in headless mode.
 
