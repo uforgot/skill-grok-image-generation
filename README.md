@@ -1,88 +1,211 @@
 # Grok Image Skill
 
-Generate and edit images through Grok Build's native `image_gen` and `image_edit` tools using the current grok.com OAuth session.
+Generate and edit images with Grok Build’s native `image_gen` and `image_edit` tools through an existing grok.com OAuth session.
+
+This package is built for OpenClaw and Hermes. It does **not** call the xAI REST API, does not pass `XAI_API_KEY`, and never changes providers automatically after a Grok failure.
+
+**Status:** verified for local use on 2026-07-27 with real OpenClaw and Hermes sessions, generation and editing samples, and fail-closed tests.
+
+## What it does
+
+- Generates images with Grok Build native `image_gen`.
+- Edits one local JPEG, PNG, or WebP with native `image_edit`.
+- Supports `auto`, `1:1`, `16:9`, `9:16`, `4:3`, and `3:4`.
+- Restricts each Grok run to one requested image tool and disables web search.
+- Uses non-interactive approval for headless agent runs.
+- Resolves results from the current Grok session instead of selecting the newest global file.
+- Copies atomically, preserves the provider’s real extension, and verifies SHA-256.
+- Stops on OAuth, permission, timeout, moderation, provider, or output errors without fallback.
 
 ## Requirements
 
+- Python 3.9+
 - Grok Build CLI on `PATH`
 - `grok models` reports `You are logged in with grok.com.`
-- Python 3.9+
+- A writable output directory
+- For edits, one readable local JPEG, PNG, or WebP source
 
-The wrapper removes `XAI_API_KEY` from the child environment and does not call the xAI REST API.
+## Install
 
-## Agent skill package
+### OpenClaw
 
-[`SKILL.md`](SKILL.md) is the canonical OpenClaw/Hermes agent workflow. Install or mount this repository as one skill directory so `SKILL.md` and `scripts/grok_image.py` keep their relative layout. The skill routes only explicit Grok/Grok Imagine/xAI OAuth requests here; native OpenClaw and Codex requests keep their own providers.
+Install directly from GitHub as a managed skill:
 
-The package does not assume a live OpenClaw or Hermes installation path.
+```bash
+openclaw skills install \
+  git:https://github.com/uforgot/skill-grok-image-generation.git \
+  --as grok-image-generation \
+  --global
+```
 
-## Generate
+Update an existing installation with `--force`, then verify discovery:
+
+```bash
+openclaw skills info grok-image-generation --json
+```
+
+The result should report `eligible: true` and `modelVisible: true`.
+
+### Hermes
+
+Clone the repository and expose it as a local skill directory:
+
+```bash
+git clone \
+  https://github.com/uforgot/skill-grok-image-generation.git \
+  /path/to/skill-grok-image-generation
+
+ln -sfn \
+  /path/to/skill-grok-image-generation \
+  ~/.hermes/skills/grok-image-generation
+
+hermes skills list
+```
+
+Hermes must have its skills and terminal toolsets enabled.
+
+## Agent routing
+
+[`SKILL.md`](SKILL.md) is the canonical agent workflow.
+
+- Explicit Grok, Grok Imagine, grok.com OAuth, or Grok Build request → this skill.
+- Explicit Codex or OpenAI OAuth image request → existing Codex image skill.
+- Explicit OpenClaw or Hermes native image request → that runtime’s native image tool.
+- No provider preference → preserve the runtime’s existing default.
+- Grok failure → stop and report the Grok error; never choose another provider automatically.
+
+## Quick start
+
+### Generate
 
 ```bash
 python3 scripts/grok_image.py generate \
   "A paper-cut forest at dawn, soft layered shadows, no text" \
   --aspect-ratio 16:9 \
-  --output ./out/forest.jpg \
+  --output ./out/forest.png \
   --timeout 180
 ```
 
-Supported aspect ratios:
-
-```text
-auto, 1:1, 16:9, 9:16, 4:3, 3:4
-```
-
-Successful stdout:
-
-```json
-{"ok": true, "provider": "grok-build-oauth", "action": "generate", "output": "/absolute/path/out/forest.jpg", "extension": ".jpg", "sha256": "...", "bytes": 123456, "session_id": "..."}
-```
-
-The wrapper binds the result to the current Grok session ID and the `images/...` path returned in that run's streaming events. It copies through a temporary file and atomically replaces the destination, then verifies the SHA-256 hash. The source format is preserved: if `--output` has a different extension, the returned path is corrected to the generated extension.
-
-The Grok subprocess is restricted to `image_gen`, runs with web search disabled, and uses non-interactive approval so the image call can complete in headless mode. The original command without the `generate` subcommand remains supported for compatibility.
-
-## Edit one image
+### Edit one image
 
 ```bash
 python3 scripts/grok_image.py edit \
   "Change only the vase from cobalt blue to coral red; preserve composition, lighting, background, and camera angle" \
   --image ./input/cobalt-vase.jpg \
-  --output ./out/coral-vase.jpg \
+  --output ./out/coral-vase.png \
   --timeout 180
 ```
 
-V1 accepts one readable local JPEG, PNG, or WebP source. The wrapper validates the file signature, resolves the absolute source path, and passes it only to native `image_edit`. The source aspect ratio is preserved when `--aspect-ratio` is omitted. Source and output paths must differ so an edit cannot silently overwrite its reference.
+Omit edit `--aspect-ratio` to preserve the source ratio. Source and destination must differ.
 
-The edit prompt is reference-first: apply only the requested change and preserve everything else. For a named real person, use a real, consented reference and follow Grok's safety policy.
+## Output contract
 
-Successful edit stdout uses the same output metadata with `"action": "edit"`.
-
-## Errors
-
-Before generation or editing, the wrapper verifies that `grok models` reports an active grok.com login. Failures are printed as JSON to stderr:
+Success is one JSON object on stdout:
 
 ```json
-{"ok": false, "provider": "grok-build-oauth", "action": "generate", "error": "oauth_invalid", "message": "Grok OAuth 로그인이 없거나 만료됐어.", "fallback_used": false, "next_action": "`grok login`으로 로그인한 뒤 다시 요청해 줘.", "user_message": "Grok OAuth 이미지 생성 실패 — 원인: 인증 만료. 자동 fallback은 실행하지 않았어. 다음 행동: `grok login`으로 로그인한 뒤 다시 요청해 줘."}
+{
+  "ok": true,
+  "provider": "grok-build-oauth",
+  "action": "generate",
+  "output": "/absolute/path/out/forest.jpg",
+  "extension": ".jpg",
+  "sha256": "...",
+  "bytes": 123456,
+  "session_id": "..."
+}
 ```
 
-Agents should show `user_message` verbatim and stop. The reason is normalized to `인증 만료`, `권한 취소`, `timeout`, `moderation`, or `기타`; edit failures use `이미지 편집 실패`. The wrapper never invokes OpenClaw `image_generate`, Codex image generation, the xAI REST API, or `XAI_API_KEY` as a fallback.
+Always use the returned `output` path. The provider controls the real format, so a requested `.png` may return `.jpg`.
+
+Failures are JSON on stderr and include a ready-to-display `user_message`:
+
+```json
+{
+  "ok": false,
+  "provider": "grok-build-oauth",
+  "action": "generate",
+  "error": "oauth_invalid",
+  "message": "Grok OAuth 로그인이 없거나 만료됐어.",
+  "fallback_used": false,
+  "next_action": "`grok login`으로 로그인한 뒤 다시 요청해 줘.",
+  "user_message": "Grok OAuth 이미지 생성 실패 — 원인: 인증 만료. 자동 fallback은 실행하지 않았어. 다음 행동: `grok login`으로 로그인한 뒤 다시 요청해 줘."
+}
+```
+
+Agents should show `user_message` verbatim and stop.
 
 Exit codes:
 
 - `2`: invalid prompt, arguments, source image, or edit destination
 - `3`: Grok CLI or OAuth login unavailable
-- `4`: image tool permission cancelled
+- `4`: image-tool permission cancelled
 - `5`: moderation, provider, or empty-response failure
 - `6`: timeout
-- `7`: output discovery, copy, or hash verification failure
+- `7`: output discovery, copy, or hash-verification failure
 
-The destination is only replaced after a complete image has been copied to a temporary file. Timeout and provider failures leave the requested output untouched; copy failures remove temporary files. No provider or API-key fallback is attempted.
+## Security and failure guarantees
 
-Design and verified baseline details:
+The wrapper:
 
-- [`docs/interface-and-routing.md`](docs/interface-and-routing.md)
-- [`docs/oauth-generation-baseline.md`](docs/oauth-generation-baseline.md)
-- [`docs/integration-openclaw-hermes.md`](docs/integration-openclaw-hermes.md)
-- [`docs/openclaw-e2e-review.md`](docs/openclaw-e2e-review.md)
-- [`docs/fail-closed-errors.md`](docs/fail-closed-errors.md)
+- launches only `grok` through the current grok.com OAuth login;
+- removes `XAI_API_KEY` from the child environment;
+- passes only `image_gen` or `image_edit` through `--tools`;
+- adds `--disable-web-search --always-approve`;
+- never invokes OpenClaw `image_generate`, Codex, the xAI REST API, or another provider;
+- leaves the requested destination untouched on pre-copy failures;
+- cleans temporary files after failed copies.
+
+Moderation failures must not be retried with evasive prompt changes.
+
+## Verified examples
+
+Generated at 16:9:
+
+![Grok generated mint teapot on a plum background](examples/e2e-1139-generate.jpg)
+
+Edited to 9:16 with a requested recolor:
+
+![Grok edited orange teapot on a plum background](examples/e2e-1139-edit.jpg)
+
+Machine-readable evidence:
+
+- [`examples/e2e-1139-results.json`](examples/e2e-1139-results.json)
+- [`examples/fail-closed-1140-results.json`](examples/fail-closed-1140-results.json)
+
+## Test
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 -m py_compile scripts/grok_image.py tests/*.py
+```
+
+The final package passes 40 tests covering command construction, OAuth preflight, permission cancellation, timeout, moderation, output isolation, atomic copy, editing safety, portable package layout, documentation links, committed samples, and fresh-session fail-closed evidence.
+
+## Limitations
+
+- Edit V1 accepts one source image.
+- Grok chooses exact pixel dimensions and output format for a requested ratio.
+- Generation and editing are nondeterministic; visually inspect every result.
+- Named real people require a real, consented reference and the edit flow.
+- Grok Build CLI output and session layout are external dependencies that may change.
+
+## Documentation
+
+Start with [`docs/README.md`](docs/README.md).
+
+- [`docs/interface-and-routing.md`](docs/interface-and-routing.md) — interface, routing, and contracts
+- [`docs/oauth-generation-baseline.md`](docs/oauth-generation-baseline.md) — original OAuth baseline
+- [`docs/integration-openclaw-hermes.md`](docs/integration-openclaw-hermes.md) — runtime integration
+- [`docs/openclaw-e2e-review.md`](docs/openclaw-e2e-review.md) — generate/edit review evidence
+- [`docs/fail-closed-errors.md`](docs/fail-closed-errors.md) — error and no-fallback verification
+- [`docs/release-readiness.md`](docs/release-readiness.md) — final readiness summary
+
+## Repository layout
+
+```text
+SKILL.md                       Canonical agent workflow
+scripts/grok_image.py          Deterministic OAuth wrapper
+tests/                         Unit, package, artifact, and fail-closed tests
+examples/                      Verified outputs and machine-readable evidence
+docs/                          Design and verification records
+```
