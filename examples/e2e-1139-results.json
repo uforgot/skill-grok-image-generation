@@ -1,0 +1,66 @@
+{
+  "schema": "grok-image-e2e-v1",
+  "date": "2026-07-27",
+  "dudu_item": 1139,
+  "installation": {
+    "skill": "grok-image-generation",
+    "source": "openclaw-managed",
+    "eligible": true,
+    "model_visible": true
+  },
+  "success": {
+    "generate": {
+      "session_id": "3427d725-04c8-4dc0-a481-ac188e41d609",
+      "route": "grok-image-generation",
+      "provider": "grok-build-oauth",
+      "action": "generate",
+      "requested_extension": ".png",
+      "returned_extension": ".jpg",
+      "sample": "e2e-1139-generate.jpg",
+      "sha256": "6e6bef8505bb247c566ccfd4b6dd3ac9b349bac1a854ac09a1174dec668b3993",
+      "bytes": 188445,
+      "width": 1280,
+      "height": 720,
+      "aspect_ratio": "16:9",
+      "visual_verified": true
+    },
+    "edit": {
+      "session_id": "96fe7008-b0ce-4a1d-841d-bcc1815174fc",
+      "route": "grok-image-generation",
+      "provider": "grok-build-oauth",
+      "action": "edit",
+      "requested_extension": ".png",
+      "returned_extension": ".jpg",
+      "sample": "e2e-1139-edit.jpg",
+      "sha256": "1553faa010d545f5f8ffef1504b56a6f5cebf9f4ce694c1f0a83f827c5909d16",
+      "bytes": 156848,
+      "width": 720,
+      "height": 1280,
+      "aspect_ratio": "9:16",
+      "source_overwritten": false,
+      "visual_verified": true
+    }
+  },
+  "fail_closed": {
+    "oauth_expired": {
+      "session_id": "db7802d4-54e4-407c-9fe2-d35616f4796e",
+      "error": "oauth_invalid",
+      "exit_code": 3,
+      "fallback_used": false,
+      "output_exists": false,
+      "message": "Grok OAuth 로그인이 없거나 만료됐어.",
+      "next_action": "`grok login`으로 로그인한 뒤 다시 요청해 줘.",
+      "isolated_harness": true
+    },
+    "permission_cancelled": {
+      "session_id": "0165e207-dd41-40fb-8c74-cbd5036b0c77",
+      "error": "permission_cancelled",
+      "exit_code": 4,
+      "fallback_used": false,
+      "output_exists": false,
+      "message": "Grok 이미지 도구 실행이 취소됐어. 권한 승인이 실패했을 가능성이 있어.",
+      "next_action": "headless 실행의 승인 설정을 확인한 뒤 다시 시도해 줘.",
+      "isolated_harness": true
+    }
+  }
+}

@@ -82,3 +82,4 @@ Design and verified baseline details:
 - [`docs/interface-and-routing.md`](docs/interface-and-routing.md)
 - [`docs/oauth-generation-baseline.md`](docs/oauth-generation-baseline.md)
 - [`docs/integration-openclaw-hermes.md`](docs/integration-openclaw-hermes.md)
+- [`docs/openclaw-e2e-review.md`](docs/openclaw-e2e-review.md)
