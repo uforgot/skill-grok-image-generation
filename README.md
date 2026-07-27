@@ -1,6 +1,6 @@
-# Grok Image Generation Skill
+# Grok Image Skill
 
-Generate images through Grok Build's native `image_gen` tool using the current grok.com OAuth session.
+Generate and edit images through Grok Build's native `image_gen` and `image_edit` tools using the current grok.com OAuth session.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ The wrapper removes `XAI_API_KEY` from the child environment and does not call t
 ## Generate
 
 ```bash
-python3 scripts/grok_image.py \
+python3 scripts/grok_image.py generate \
   "A paper-cut forest at dawn, soft layered shadows, no text" \
   --aspect-ratio 16:9 \
   --output ./out/forest.jpg \
@@ -34,11 +34,27 @@ Successful stdout:
 
 The wrapper binds the result to the current Grok session ID and the `images/...` path returned in that run's streaming events. It copies through a temporary file and atomically replaces the destination, then verifies the SHA-256 hash. The source format is preserved: if `--output` has a different extension, the returned path is corrected to the generated extension.
 
-The Grok subprocess is restricted to `image_gen`, runs with web search disabled, and uses non-interactive approval so the image call can complete in headless mode.
+The Grok subprocess is restricted to `image_gen`, runs with web search disabled, and uses non-interactive approval so the image call can complete in headless mode. The original command without the `generate` subcommand remains supported for compatibility.
+
+## Edit one image
+
+```bash
+python3 scripts/grok_image.py edit \
+  "Change only the vase from cobalt blue to coral red; preserve composition, lighting, background, and camera angle" \
+  --image ./input/cobalt-vase.jpg \
+  --output ./out/coral-vase.jpg \
+  --timeout 180
+```
+
+V1 accepts one readable local JPEG, PNG, or WebP source. The wrapper validates the file signature, resolves the absolute source path, and passes it only to native `image_edit`. The source aspect ratio is preserved when `--aspect-ratio` is omitted. Source and output paths must differ so an edit cannot silently overwrite its reference.
+
+The edit prompt is reference-first: apply only the requested change and preserve everything else. For a named real person, use a real, consented reference and follow Grok's safety policy.
+
+Successful edit stdout uses the same output metadata with `"action": "edit"`.
 
 ## Errors
 
-Before generation, the wrapper verifies that `grok models` reports an active grok.com login. Failures are printed as JSON to stderr:
+Before generation or editing, the wrapper verifies that `grok models` reports an active grok.com login. Failures are printed as JSON to stderr:
 
 ```json
 {"ok": false, "provider": "grok-build-oauth", "action": "generate", "error": "oauth_invalid", "message": "Grok OAuth 로그인이 없거나 만료됐어.", "fallback_used": false, "next_action": "`grok login`으로 로그인한 뒤 다시 요청해 줘."}
@@ -46,7 +62,7 @@ Before generation, the wrapper verifies that `grok models` reports an active gro
 
 Exit codes:
 
-- `2`: invalid prompt or arguments
+- `2`: invalid prompt, arguments, source image, or edit destination
 - `3`: Grok CLI or OAuth login unavailable
 - `4`: image tool permission cancelled
 - `5`: moderation, provider, or empty-response failure

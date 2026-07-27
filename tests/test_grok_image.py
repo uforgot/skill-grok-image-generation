@@ -276,6 +276,85 @@ class GrokImageTests(unittest.TestCase):
             self.assertEqual(list(destination_dir.glob(".*.tmp")), [])
             self.assertFalse((destination_dir / "result.jpg").exists())
 
+    def test_edit_command_uses_only_image_edit_and_absolute_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.jpg"
+            prompt = "Change only the vase from blue to red"
+            command = grok_image.build_edit_command(prompt, source)
+            tools_index = command.index("--tools")
+            self.assertEqual(command[tools_index + 1], "image_edit")
+            self.assertIn("--always-approve", command)
+            self.assertIn("--disable-web-search", command)
+            agent_prompt = command[command.index("-p") + 1]
+            self.assertIn(json.dumps(prompt), agent_prompt)
+            self.assertIn(json.dumps(str(source.resolve())), agent_prompt)
+            self.assertNotIn("aspect_ratio", agent_prompt)
+
+    def test_edit_command_includes_explicit_aspect_ratio(self):
+        command = grok_image.build_edit_command(
+            "Extend the background", Path("source.png"), "16:9"
+        )
+        agent_prompt = command[command.index("-p") + 1]
+        self.assertIn('"aspect_ratio": "16:9"', agent_prompt)
+
+    def test_validate_source_image_checks_signature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            valid = root / "valid.jpg"
+            invalid = root / "invalid.jpg"
+            valid.write_bytes(b"\xff\xd8\xff\xe0" + b"jpeg-data")
+            invalid.write_bytes(b"not-an-image")
+            self.assertEqual(grok_image.validate_source_image(valid), valid.resolve())
+            with self.assertRaises(grok_image.GenerationError) as raised:
+                grok_image.validate_source_image(invalid)
+            self.assertEqual(raised.exception.code, "invalid_source")
+            self.assertEqual(raised.exception.exit_code, 2)
+
+    def test_edit_rejects_source_overwrite_before_provider_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.jpg"
+            source.write_bytes(b"\xff\xd8\xff\xe0" + b"jpeg-data")
+            with patch.object(grok_image, "execute_image_action") as execute, self.assertRaises(
+                grok_image.GenerationError
+            ) as raised:
+                grok_image.edit_image("Make it red", source, source.with_suffix(".png"))
+            self.assertEqual(raised.exception.code, "invalid_output")
+            execute.assert_not_called()
+
+    def test_edit_routes_valid_source_to_edit_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.jpg"
+            output = root / "result.jpg"
+            source.write_bytes(b"\xff\xd8\xff\xe0" + b"jpeg-data")
+            expected = {"ok": True, "action": "edit", "output": str(output)}
+            with patch.object(
+                grok_image, "execute_image_action", return_value=expected
+            ) as execute:
+                result = grok_image.edit_image(
+                    "Change only the color", source, output, timeout=42
+                )
+            self.assertEqual(result, expected)
+            action, command, requested, timeout = execute.call_args.args
+            self.assertEqual(action, "edit")
+            self.assertEqual(command[command.index("--tools") + 1], "image_edit")
+            self.assertEqual(requested, output)
+            self.assertEqual(timeout, 42)
+
+    def test_parser_supports_edit_and_legacy_generate(self):
+        edit_args = grok_image.parse_args(
+            ["edit", "Make it blue", "--image", "source.jpg"]
+        )
+        legacy_args = grok_image.parse_args(["Generate a blue cube"])
+        self.assertEqual(edit_args.action, "edit")
+        self.assertIsNone(edit_args.aspect_ratio)
+        self.assertEqual(legacy_args.action, "generate")
+        self.assertEqual(legacy_args.aspect_ratio, "auto")
+
+    def test_error_payload_reports_edit_action(self):
+        failure = grok_image.error("test", "failed", "retry", 5)
+        self.assertEqual(failure.payload("edit")["action"], "edit")
+
 
 if __name__ == "__main__":
     unittest.main()
