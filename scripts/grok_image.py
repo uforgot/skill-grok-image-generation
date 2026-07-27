@@ -30,6 +30,21 @@ MODERATION_MARKERS = (
     "request blocked",
     "respect_moderation=false",
 )
+FAILURE_REASON_LABELS = {
+    "oauth_invalid": "인증 만료",
+    "permission_cancelled": "권한 취소",
+    "timeout": "timeout",
+    "moderation_blocked": "moderation",
+}
+
+
+def user_failure_message(code: str, next_action: str, action: str) -> str:
+    activity = "편집" if action == "edit" else "생성"
+    reason = FAILURE_REASON_LABELS.get(code, "기타")
+    return (
+        f"Grok OAuth 이미지 {activity} 실패 — 원인: {reason}. "
+        f"자동 fallback은 실행하지 않았어. 다음 행동: {next_action}"
+    )
 
 
 class GenerationError(RuntimeError):
@@ -55,6 +70,9 @@ class GenerationError(RuntimeError):
             "message": self.message,
             "fallback_used": False,
             "next_action": self.next_action,
+            "user_message": user_failure_message(
+                self.code, self.next_action, action
+            ),
         }
 
 

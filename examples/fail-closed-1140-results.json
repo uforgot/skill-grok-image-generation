@@ -1,0 +1,62 @@
+{
+  "schema": "grok-image-fail-closed-v1",
+  "date": "2026-07-27",
+  "dudu_item": 1140,
+  "template": "Grok OAuth 이미지 생성 실패 — 원인: <인증 만료/권한 취소/timeout/moderation/기타>. 자동 fallback은 실행하지 않았어. 다음 행동: <조치>.",
+  "cases": {
+    "oauth_expired": {
+      "error": "oauth_invalid",
+      "exit_code": 3,
+      "reason": "인증 만료",
+      "session_id": "a9bb8ed2-c84e-43dd-b79a-a9699c1e1779",
+      "user_message": "Grok OAuth 이미지 생성 실패 — 원인: 인증 만료. 자동 fallback은 실행하지 않았어. 다음 행동: `grok login`으로 로그인한 뒤 다시 요청해 줘.",
+      "fallback_used": false,
+      "output_exists": false,
+      "grok_call_count": 1,
+      "other_provider_calls": 0,
+      "isolated_harness": true
+    },
+    "permission_cancelled": {
+      "error": "permission_cancelled",
+      "exit_code": 4,
+      "reason": "권한 취소",
+      "session_id": "6a795022-a0ce-47ed-a28c-e37d573ccc68",
+      "user_message": "Grok OAuth 이미지 생성 실패 — 원인: 권한 취소. 자동 fallback은 실행하지 않았어. 다음 행동: headless 실행의 승인 설정을 확인한 뒤 다시 시도해 줘.",
+      "fallback_used": false,
+      "output_exists": false,
+      "grok_call_count": 2,
+      "other_provider_calls": 0,
+      "isolated_harness": true
+    },
+    "timeout": {
+      "error": "timeout",
+      "exit_code": 6,
+      "reason": "timeout",
+      "session_id": "548e86e8-2749-457c-84ad-3cee97606ee8",
+      "user_message": "Grok OAuth 이미지 생성 실패 — 원인: timeout. 자동 fallback은 실행하지 않았어. 다음 행동: 잠시 후 다시 시도하거나 `--timeout` 값을 늘려 줘.",
+      "fallback_used": false,
+      "output_exists": false,
+      "grok_call_count": 2,
+      "other_provider_calls": 0,
+      "isolated_harness": true
+    },
+    "moderation": {
+      "error": "moderation_blocked",
+      "exit_code": 5,
+      "reason": "moderation",
+      "session_id": "bdc0ebd1-9743-4671-a940-ed4baa29ae62",
+      "user_message": "Grok OAuth 이미지 생성 실패 — 원인: moderation. 자동 fallback은 실행하지 않았어. 다음 행동: 차단을 우회하지 말고 다른 안전한 방향으로 프롬프트를 수정해 줘.",
+      "fallback_used": false,
+      "output_exists": false,
+      "grok_call_count": 2,
+      "other_provider_calls": 0,
+      "isolated_harness": true
+    }
+  },
+  "forbidden_fallbacks": [
+    "OpenClaw image_generate",
+    "Codex image generation",
+    "xAI REST API",
+    "XAI_API_KEY"
+  ]
+}

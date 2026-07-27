@@ -63,8 +63,10 @@ Successful edit stdout uses the same output metadata with `"action": "edit"`.
 Before generation or editing, the wrapper verifies that `grok models` reports an active grok.com login. Failures are printed as JSON to stderr:
 
 ```json
-{"ok": false, "provider": "grok-build-oauth", "action": "generate", "error": "oauth_invalid", "message": "Grok OAuth 로그인이 없거나 만료됐어.", "fallback_used": false, "next_action": "`grok login`으로 로그인한 뒤 다시 요청해 줘."}
+{"ok": false, "provider": "grok-build-oauth", "action": "generate", "error": "oauth_invalid", "message": "Grok OAuth 로그인이 없거나 만료됐어.", "fallback_used": false, "next_action": "`grok login`으로 로그인한 뒤 다시 요청해 줘.", "user_message": "Grok OAuth 이미지 생성 실패 — 원인: 인증 만료. 자동 fallback은 실행하지 않았어. 다음 행동: `grok login`으로 로그인한 뒤 다시 요청해 줘."}
 ```
+
+Agents should show `user_message` verbatim and stop. The reason is normalized to `인증 만료`, `권한 취소`, `timeout`, `moderation`, or `기타`; edit failures use `이미지 편집 실패`. The wrapper never invokes OpenClaw `image_generate`, Codex image generation, the xAI REST API, or `XAI_API_KEY` as a fallback.
 
 Exit codes:
 
@@ -83,3 +85,4 @@ Design and verified baseline details:
 - [`docs/oauth-generation-baseline.md`](docs/oauth-generation-baseline.md)
 - [`docs/integration-openclaw-hermes.md`](docs/integration-openclaw-hermes.md)
 - [`docs/openclaw-e2e-review.md`](docs/openclaw-e2e-review.md)
+- [`docs/fail-closed-errors.md`](docs/fail-closed-errors.md)

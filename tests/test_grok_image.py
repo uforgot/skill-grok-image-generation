@@ -353,7 +353,30 @@ class GrokImageTests(unittest.TestCase):
 
     def test_error_payload_reports_edit_action(self):
         failure = grok_image.error("test", "failed", "retry", 5)
-        self.assertEqual(failure.payload("edit")["action"], "edit")
+        payload = failure.payload("edit")
+        self.assertEqual(payload["action"], "edit")
+        self.assertEqual(
+            payload["user_message"],
+            "Grok OAuth 이미지 편집 실패 — 원인: 기타. "
+            "자동 fallback은 실행하지 않았어. 다음 행동: retry",
+        )
+
+    def test_unified_user_messages_cover_required_failure_reasons(self):
+        expected = {
+            "oauth_invalid": "인증 만료",
+            "permission_cancelled": "권한 취소",
+            "timeout": "timeout",
+            "moderation_blocked": "moderation",
+            "provider_error": "기타",
+        }
+        for code, reason in expected.items():
+            payload = grok_image.error(code, "detail", "retry", 5).payload()
+            self.assertFalse(payload["fallback_used"])
+            self.assertEqual(
+                payload["user_message"],
+                f"Grok OAuth 이미지 생성 실패 — 원인: {reason}. "
+                "자동 fallback은 실행하지 않았어. 다음 행동: retry",
+            )
 
 
 if __name__ == "__main__":

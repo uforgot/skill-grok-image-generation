@@ -32,6 +32,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("No provider preference", text)
         self.assertIn("Never fall back to another provider", text)
         self.assertIn("fallback_used: false", text)
+        self.assertIn("Show `user_message` verbatim", text)
+        self.assertIn("자동 fallback은 실행하지 않았어", text)
 
     def test_skill_contains_no_machine_specific_install_path(self):
         text = SKILL.read_text()

@@ -86,7 +86,15 @@ Use the returned `output` path, not the originally requested filename, because G
 
 ## Failure handling
 
-Failures are JSON on stderr with `ok: false`, an `error`, user-facing `message`, `fallback_used: false`, and `next_action`.
+Failures are JSON on stderr with `ok: false`, an `error`, diagnostic `message`, `fallback_used: false`, `next_action`, and a unified user-facing `user_message`.
+
+Show `user_message` verbatim to the user. Its format is:
+
+```text
+Grok OAuth 이미지 생성 실패 — 원인: <인증 만료/권한 취소/timeout/moderation/기타>. 자동 fallback은 실행하지 않았어. 다음 행동: <조치>.
+```
+
+Edit failures use `이미지 편집 실패` in the same format.
 
 - Exit 2: invalid prompt, ratio, source, or destination.
 - Exit 3: missing Grok CLI or invalid/expired grok.com OAuth login.
@@ -97,10 +105,8 @@ Failures are JSON on stderr with `ok: false`, an `error`, user-facing `message`,
 
 On any failure:
 
-1. State the cause from `message`.
-2. State that automatic fallback was not used.
-3. Give `next_action`.
-4. Stop. Do not invoke another image provider unless the user makes a new explicit request.
+1. Return `user_message`, which already states the cause, no-fallback decision, and `next_action`.
+2. Stop. Do not invoke another image provider unless the user makes a new explicit request.
 
 On moderation failure, do not retry or paraphrase to evade the block. Timeout/provider failures leave the requested destination untouched; failed copies clean their temporary files.
 
