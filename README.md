@@ -10,6 +10,12 @@ Generate and edit images through Grok Build's native `image_gen` and `image_edit
 
 The wrapper removes `XAI_API_KEY` from the child environment and does not call the xAI REST API.
 
+## Agent skill package
+
+[`SKILL.md`](SKILL.md) is the canonical OpenClaw/Hermes agent workflow. Install or mount this repository as one skill directory so `SKILL.md` and `scripts/grok_image.py` keep their relative layout. The skill routes only explicit Grok/Grok Imagine/xAI OAuth requests here; native OpenClaw and Codex requests keep their own providers.
+
+The package does not assume a live OpenClaw or Hermes installation path.
+
 ## Generate
 
 ```bash
